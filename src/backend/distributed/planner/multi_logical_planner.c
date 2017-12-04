@@ -109,7 +109,8 @@ static bool ExtractSetOperationStatmentWalker(Node *node, List **setOperationLis
 static DeferredErrorMessage * DeferErrorIfUnsupportedTableCombination(Query *queryTree);
 static bool WindowPartitionOnDistributionColumn(Query *query);
 static bool AllTargetExpressionsAreColumnReferences(List *targetEntryList);
-static bool RangeTableListContainsOnlyReferenceTables(List *rangeTableList);
+static bool ContainsDistributedTableRTE(Node *node);
+static bool IsDistributedTableRTE(Node *node);
 static FieldSelect * CompositeFieldRecursive(Expr *expression, Query *query);
 static bool FullCompositeFieldList(List *compositeFieldList);
 static MultiNode * MultiNodeTree(Query *queryTree);
@@ -1510,12 +1511,12 @@ TargetListOnPartitionColumn(Query *query, List *targetEntryList)
 
 	/*
 	 * We could still behave as if the target list is on partition column if
-	 * all range table entries are reference tables and all target expressions
-	 * are column references to the given query level.
+	 * all range table entries are reference tables or intermediate results,
+	 * and all target expressions are column references to the given query level.
 	 */
 	if (!targetListOnPartitionColumn)
 	{
-		if (RangeTableListContainsOnlyReferenceTables(query->rtable) &&
+		if (!ContainsDistributedTableRTE((Node *) query->rtable) &&
 			AllTargetExpressionsAreColumnReferences(targetEntryList))
 		{
 			targetListOnPartitionColumn = true;
@@ -1580,40 +1581,42 @@ AllTargetExpressionsAreColumnReferences(List *targetEntryList)
 
 
 /*
- * RangeTableListContainsOnlyReferenceTables returns true if all range table
- * entries are reference tables.
- *
- * The function returns false for range table entries that are not relations.
- *
- * Note that the function doesn't recurse into subqueries, returns false when
- * a subquery is found.
+ * ContainsDistributedTableRTE return true if the given node contains any
+ * range table relation entry which is a distributed table;
  */
 static bool
-RangeTableListContainsOnlyReferenceTables(List *rangeTableList)
+ContainsDistributedTableRTE(Node *node)
 {
-	ListCell *rangeTableCell = NULL;
-	foreach(rangeTableCell, rangeTableList)
+	return FindNodeCheck(node, IsDistributedTableRTE);
+}
+
+
+/*
+ * IsDistributedTableRTE returns true if the input node is a range table
+ * relation entry and a distributed table (i.e., not a reference table).
+ */
+static bool
+IsDistributedTableRTE(Node *node)
+{
+	RangeTblEntry *rangeTableEntry = NULL;
+	Oid relationId = InvalidOid;
+
+	if (!IsA(node, RangeTblEntry))
 	{
-		RangeTblEntry *rangeTableEntry = (RangeTblEntry *) lfirst(rangeTableCell);
+		return false;
+	}
 
-		if (rangeTableEntry->rtekind == RTE_RELATION)
-		{
-			Oid relationId = rangeTableEntry->relid;
+	rangeTableEntry = (RangeTblEntry *) node;
+	if (rangeTableEntry->rtekind != RTE_RELATION)
+	{
+		return false;
+	}
 
-			if (!IsDistributedTable(relationId))
-			{
-				return false;
-			}
-
-			if (PartitionMethod(relationId) != DISTRIBUTE_BY_NONE)
-			{
-				return false;
-			}
-		}
-		else
-		{
-			return false;
-		}
+	relationId = rangeTableEntry->relid;
+	if (!IsDistributedTable(relationId) ||
+		PartitionMethod(relationId) == DISTRIBUTE_BY_NONE)
+	{
+		return false;
 	}
 
 	return true;
