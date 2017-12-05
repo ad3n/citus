@@ -84,6 +84,11 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	PlannerRestrictionContext *plannerRestrictionContext = NULL;
 	bool setPartitionedTablesInherited = false;
 
+	if (cursorOptions & CURSOR_OPT_FORCE_DISTRIBUTED)
+	{
+		needsDistributedPlanning = true;
+	}
+
 	if (needsDistributedPlanning)
 	{
 		/*
