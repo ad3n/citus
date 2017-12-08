@@ -317,8 +317,7 @@ FindNodeCheck(Node *node, bool (*check)(Node *))
 
 	if (IsA(node, RangeTblEntry))
 	{
-		/* query_tree_walker descends into RTEs */
-		return false;
+		return range_table_walker(list_make1(node), FindNodeCheck, check, 0);
 	}
 	else if (IsA(node, Query))
 	{
